@@ -58,7 +58,7 @@ def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, title):
     return fig
 
 # Streamlit App
-def main():
+def two_phase():
     st.title("Interactive Phase Plane Plot")
     
     # Sidebar controls
@@ -96,4 +96,4 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == '__main__':
-    main()
+    two_phase()
