@@ -56,7 +56,6 @@ def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, equilibrium_
     
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.quiver(Y1, Y2, U, V, width=0.002, color='r' if state == 'wake' else 'b')
-    ax.plot(equilibrium_y1, equilibrium_y2, 'ro' if state == 'wake' else 'bo', markersize=8, label=f'Equilibrium {state.capitalize()}')
     ax.set_title(title)
     ax.set_xlabel(f'{y1_label} Concentration')
     ax.set_ylabel(f'{y2_label} Concentration')
