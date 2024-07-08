@@ -1,5 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from scipy.integrate import odeint
 import streamlit as st
 
@@ -31,7 +31,7 @@ def model(y, t, state='wake'):
     return dydt
 
 # Function to plot the phase plane
-def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, equilibrium_y1, equilibrium_y2, title):
+def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, title):
     Y1, Y2 = np.meshgrid(y1_range, y2_range)
     U, V = np.zeros(Y1.shape), np.zeros(Y2.shape)
     
@@ -42,18 +42,23 @@ def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, equilibrium_
             U[i, j] = dydt[0]
             V[i, j] = dydt[1]
     
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.quiver(Y1, Y2, U, V, width=0.002, color='r' if state == 'wake' else 'b')
-    ax.plot(equilibrium_y1, equilibrium_y2, 'ro' if state == 'wake' else 'bo', markersize=8, label=f'Equilibrium {state.capitalize()}')
-    ax.set_title(title)
-    ax.set_xlabel(f'{y1_label} Concentration')
-    ax.set_ylabel(f'{y2_label} Concentration')
-    ax.legend()
-    
+    fig = go.Figure()
+
+    # Add quiver plot for the vector field
+    fig.add_trace(go.Cone(x=Y1.flatten(), y=Y2.flatten(), u=U.flatten(), v=V.flatten(), colorscale='Blues'))
+
+    # Add title and labels
+    fig.update_layout(
+        title=title,
+        xaxis_title=f'{y1_label} Concentration',
+        yaxis_title=f'{y2_label} Concentration',
+        showlegend=False
+    )
+
     return fig
 
 # Streamlit App
-def two_phase():
+def main():
     st.title("Interactive Phase Plane Plot")
     
     # Sidebar controls
@@ -73,10 +78,22 @@ def two_phase():
     
     # Plot phase plane
     fig = plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label,
-                           B_wake if state == 'wake' else B_sleep, P_wake if state == 'wake' else P_sleep,
                            f"Phase Plane Plot ({y1_label} vs {y2_label}, {state.capitalize()} State)")
     
-    st.pyplot(fig)
-    
+    # Click event to show equilibrium point
+    clicked = st.plotly_chart(fig, use_container_width=True)
+    if clicked:
+        equilibrium_y1 = B_wake if state == 'wake' else B_sleep
+        equilibrium_y2 = P_wake if state == 'wake' else P_sleep
+        
+        fig.add_trace(go.Scatter(
+            x=[equilibrium_y1],
+            y=[equilibrium_y2],
+            mode='markers',
+            marker=dict(size=12, color='red' if state == 'wake' else 'blue'),
+            name=f'Equilibrium {state.capitalize()}'
+        ))
+        st.plotly_chart(fig, use_container_width=True)
+
 if __name__ == '__main__':
-    two_phase()
+    main()
