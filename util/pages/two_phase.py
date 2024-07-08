@@ -44,8 +44,25 @@ def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, title):
     
     fig = go.Figure()
 
-    # Add quiver plot for the vector field
-    fig.add_trace(go.Cone(x=Y1.flatten(), y=Y2.flatten(), u=U.flatten(), v=V.flatten(), colorscale='Blues'))
+    # Add quiver plot for the vector field using Scattergl
+    fig.add_trace(go.Scattergl(
+        x=Y1.flatten(),
+        y=Y2.flatten(),
+        mode='markers+lines',
+        marker=dict(size=2, color='black'),
+        line=dict(width=1),
+        name='Vector Field'
+    ))
+
+    for i in range(Y1.shape[0]):
+        for j in range(Y1.shape[1]):
+            fig.add_annotation(
+                x=Y1[i, j], y=Y2[i, j],
+                ax=Y1[i, j] + U[i, j] * 0.2, ay=Y2[i, j] + V[i, j] * 0.2,
+                xref='x', yref='y', axref='x', ayref='y',
+                showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
+                arrowcolor='black'
+            )
 
     # Add title and labels
     fig.update_layout(
@@ -81,8 +98,10 @@ def two_phase():
                            f"Phase Plane Plot ({y1_label} vs {y2_label}, {state.capitalize()} State)")
     
     # Click event to show equilibrium point
-    clicked = st.plotly_chart(fig, use_container_width=True)
-    if clicked:
+    click_event = st.plotly_chart(fig, use_container_width=True)
+    
+    # Handle click event to display the equilibrium point
+    if click_event:
         equilibrium_y1 = B_wake if state == 'wake' else B_sleep
         equilibrium_y2 = P_wake if state == 'wake' else P_sleep
         
