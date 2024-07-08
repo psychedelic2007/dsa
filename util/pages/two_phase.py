@@ -31,7 +31,7 @@ def model(y, t, state='wake'):
     return dydt
 
 # Function to plot the phase plane
-def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, equilibrium_y1, equilibrium_y2, title):
+def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, title):
     Y1, Y2 = np.meshgrid(y1_range, y2_range)
     U, V = np.zeros(Y1.shape), np.zeros(Y2.shape)
     
@@ -44,11 +44,9 @@ def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, equilibrium_
     
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.quiver(Y1, Y2, U, V, width=0.002, color='r' if state == 'wake' else 'b')
-    ax.plot(equilibrium_y1, equilibrium_y2, 'ro' if state == 'wake' else 'bo', markersize=8, label=f'Equilibrium {state.capitalize()}')
     ax.set_title(title)
     ax.set_xlabel(f'{y1_label} Concentration')
     ax.set_ylabel(f'{y2_label} Concentration')
-    ax.legend()
     
     return fig
 
@@ -73,7 +71,6 @@ def two_phase():
     
     # Plot phase plane
     fig = plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label,
-                           B_wake if state == 'wake' else B_sleep, P_wake if state == 'wake' else P_sleep,
                            f"Phase Plane Plot ({y1_label} vs {y2_label}, {state.capitalize()} State)")
     
     st.pyplot(fig)
