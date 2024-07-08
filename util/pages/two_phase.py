@@ -53,7 +53,7 @@ def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, equilibrium_
     return fig
 
 # Streamlit App
-def 2c_phase():
+def two_phase():
     st.title("Interactive Phase Plane Plot")
     
     # Sidebar controls
@@ -79,4 +79,4 @@ def 2c_phase():
     st.pyplot(fig)
     
 if __name__ == '__main__':
-    2c_phase()
+    two_phase()
