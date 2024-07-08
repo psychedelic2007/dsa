@@ -1,5 +1,5 @@
 import numpy as np
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 from scipy.integrate import odeint
 import streamlit as st
 
@@ -31,7 +31,7 @@ def model(y, t, state='wake'):
     return dydt
 
 # Function to plot the phase plane
-def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, title):
+def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, equilibrium_y1, equilibrium_y2, title):
     Y1, Y2 = np.meshgrid(y1_range, y2_range)
     U, V = np.zeros(Y1.shape), np.zeros(Y2.shape)
     
@@ -42,36 +42,14 @@ def plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label, title):
             U[i, j] = dydt[0]
             V[i, j] = dydt[1]
     
-    fig = go.Figure()
-
-    # Add quiver plot for the vector field using Scattergl
-    fig.add_trace(go.Scattergl(
-        x=Y1.flatten(),
-        y=Y2.flatten(),
-        mode='markers+lines',
-        marker=dict(size=2, color='black'),
-        line=dict(width=1),
-        name='Vector Field'
-    ))
-
-    for i in range(Y1.shape[0]):
-        for j in range(Y1.shape[1]):
-            fig.add_annotation(
-                x=Y1[i, j], y=Y2[i, j],
-                ax=Y1[i, j] + U[i, j] * 0.2, ay=Y2[i, j] + V[i, j] * 0.2,
-                xref='x', yref='y', axref='x', ayref='y',
-                showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
-                arrowcolor='black'
-            )
-
-    # Add title and labels
-    fig.update_layout(
-        title=title,
-        xaxis_title=f'{y1_label} Concentration',
-        yaxis_title=f'{y2_label} Concentration',
-        showlegend=False
-    )
-
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.quiver(Y1, Y2, U, V, width=0.002, color='r' if state == 'wake' else 'b')
+    ax.plot(equilibrium_y1, equilibrium_y2, 'ro' if state == 'wake' else 'bo', markersize=8, label=f'Equilibrium {state.capitalize()}')
+    ax.set_title(title)
+    ax.set_xlabel(f'{y1_label} Concentration')
+    ax.set_ylabel(f'{y2_label} Concentration')
+    ax.legend()
+    
     return fig
 
 # Streamlit App
@@ -95,24 +73,10 @@ def two_phase():
     
     # Plot phase plane
     fig = plot_phase_plane(y1_range, y2_range, state, y1_label, y2_label,
+                           B_wake if state == 'wake' else B_sleep, P_wake if state == 'wake' else P_sleep,
                            f"Phase Plane Plot ({y1_label} vs {y2_label}, {state.capitalize()} State)")
     
-    # Click event to show equilibrium point
-    click_event = st.plotly_chart(fig, use_container_width=True)
+    st.pyplot(fig)
     
-    # Handle click event to display the equilibrium point
-    if click_event:
-        equilibrium_y1 = B_wake if state == 'wake' else B_sleep
-        equilibrium_y2 = P_wake if state == 'wake' else P_sleep
-        
-        fig.add_trace(go.Scatter(
-            x=[equilibrium_y1],
-            y=[equilibrium_y2],
-            mode='markers',
-            marker=dict(size=12, color='red' if state == 'wake' else 'blue'),
-            name=f'Equilibrium {state.capitalize()}'
-        ))
-        st.plotly_chart(fig, use_container_width=True)
-
 if __name__ == '__main__':
     two_phase()
