@@ -4,13 +4,13 @@ from scipy.integrate import odeint
 import streamlit as st
 
 # Parameters
-A_wake = 10.000000
-A_sleep = 7.213701
-a12_wake = 0.490436
-k = 0.209977
-a = 1.010000
-a13_wake = 0.698227
-a23_wake = 0.200000
+A_wake = 34.657
+A_sleep = 1.155
+a12_wake = 0.077016
+k = 0.346573
+a = 1.01
+a13_wake = 0.3
+a23_wake = 0.008
 
 # Equilibrium points
 B_wake = A_wake / (a12_wake + a13_wake)
