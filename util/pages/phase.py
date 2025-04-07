@@ -4,34 +4,39 @@ from scipy.integrate import odeint
 import streamlit as st
 
 # Parameters
-A_wake = 34.657
-A_sleep = 1.155
-a12_wake = 0.077016
-k = 0.346573
-a = 1.01
-a13_wake = 0.3
-a23_wake = 0.008
+A = 12.063
+sigma_A = 0.782
+r_bc = 1.623
+sigma_bc = 2.505
+r_cp = 0.00572
+sigma_cp = 5.190
+r_bp = 0.199
+sigma_bp = 4.618
+r_p = 0.300
+sigma_p = 4.670
 
 # Equilibrium points
-B_wake = A_wake / (a12_wake + a13_wake)
-B_sleep = A_sleep / (a * a12_wake + a * a13_wake)
-C_wake = (a12_wake * A_wake) / (a23_wake * (a12_wake + a13_wake))
-C_sleep = (a * a12_wake * A_sleep) / (a * a23_wake * (a * a12_wake + a * a13_wake))
-P_wake = A_wake / k
-P_sleep = A_sleep / k
+B_wake = A / (r_bc+r_bp)
+B_sleep = (sigma_A * A)/ (sigma_bc*r_bc + sigma_bp*r_bp)
+C_wake = (r_bc * A) / (r_cp * (r_bc+r_bp))
+C_sleep = (sigma_bc*r_bc * sigma_A*A) / (sigma_cp*r_cp * (sigma_bc*r_bc+sigma_bp*r_bp))
+P_wake = A / r_p
+P_sleep = (sigma_A*A) / (sigma_p*r_p)
 
 # Function to compute the vector field
 def model(y, t, state='wake'):
     if state == 'wake':
-        A = A_wake
-        a12 = a12_wake
-        a13 = a13_wake
-        a23 = a23_wake
+        A = A
+        a12 = r_bc
+        a13 = r_bp
+        a23 = r_cp
+        k = r_p
     else:
-        A = A_sleep
-        a12 = a * a12_wake
-        a13 = a * a13_wake
-        a23 = a * a23_wake
+        A = sigma_A*A
+        a12 = sigma_bc*r_bc
+        a13 = sigma_bp*r_bp
+        a23 = sigma_cp*r_cp
+        k = sigma_p*r_p
     
     dydt = np.zeros((3,))
     dydt[0] = A - (a13 + a12) * y[0]
