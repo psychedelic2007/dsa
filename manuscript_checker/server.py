@@ -1,4 +1,4 @@
-"""Web app:  uvicorn manuscript_checker.server:app  (then open http://localhost:8000)
+"""Web app. Start it with `python manuscript_checker/run.py` (works from any directory).
 
 Uploads exist only for the duration of one request (large ones in a temporary file that is
 deleted afterwards); nothing is stored and nothing leaves the machine running the server.

@@ -5,10 +5,17 @@ main manuscript, a separate legends file, and supplementary files.
 
 ```bash
 pip install -r manuscript_checker/requirements.txt
-uvicorn manuscript_checker.server:app      # web UI at http://localhost:8000
+python manuscript_checker/run.py           # web UI at http://localhost:8000 (works from any directory)
+```
+
+From the repository root (the folder that contains `manuscript_checker/`) you can also run:
+
+```bash
 python -m manuscript_checker.cli paper.docx --supp SI.docx   # CLI; exit 1 on errors
 python -m pytest manuscript_checker                          # tests
 ```
+
+Requires Python 3.10+ (tested on 3.11 and 3.13).
 
 The web UI: drag in files, set each file's role, and get a figure map (click a tile to see
 its caption and every citation in context), a citation-flow plot showing where in the
