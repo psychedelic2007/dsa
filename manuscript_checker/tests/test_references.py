@@ -54,9 +54,9 @@ def test_years_and_equation_numbers_are_not_citations():
 
 
 def test_parenthesis_style_when_dominant():
-    r = refs(["Shown before (1) and later (2, 3).", "Also (4–5)."] + NUMBERED)
+    r = refs(["Shown before (1) and later (2, 3).", "Also (4–5) and (6) and (7) and (8)."] + NUMBERED)
     assert r.detail == "parenthesis"
-    assert {e.number for e in r.entries if e.citations} == {1, 2, 3, 4, 5}
+    assert {e.number for e in r.entries if e.citations} == {1, 2, 3, 4, 5, 6, 7, 8}
 
 
 def test_numbered_list_split_from_one_pdf_block():

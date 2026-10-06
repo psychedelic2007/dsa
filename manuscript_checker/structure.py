@@ -25,6 +25,7 @@ _STOP_HEADING = re.compile(
 )
 _ABSTRACT_HEADING = re.compile(_SECTION_PREFIX + r"(?:abstract|summary)\s*:?\s*$", re.IGNORECASE)
 _ABSTRACT_INLINE = re.compile(r"^\s*(?:abstract|summary)\s*[:.—–-]\s*", re.IGNORECASE)
+_INTRO_HEADING = re.compile(_SECTION_PREFIX + r"(?:introduction|background)\s*:?\s*$", re.IGNORECASE)
 _KEYWORDS = re.compile(r"^\s*(?:key\s*words?|index\s+terms)\b", re.IGNORECASE)
 
 
@@ -106,6 +107,25 @@ def analyse_structure(blocks: list[Block]) -> Structure:
             abstract = [b]
             start = i + 1
             break
+    if not abstract:
+        # No "Abstract" heading (e.g. Scientific Reports): everything before the Introduction is
+        # title page, and its longest paragraph is the abstract.
+        intro = next((i for i, b in enumerate(manuscript[:80])
+                      if len(b.text) <= 40 and _INTRO_HEADING.match(b.text)), None)
+        keywords = next((i for i, b in enumerate(manuscript[:40]) if _KEYWORDS.match(b.text)), None)
+        if intro is None and keywords:
+            # No Abstract or Introduction heading either: the main text starts after "Keywords".
+            before = manuscript[:keywords]
+            abstract = [b for b in before if len(b.text) >= 150]
+            front_ids = {id(b) for b in before if len(b.text) < 150} | {id(manuscript[keywords])}
+            start = keywords + 1
+        elif intro:
+            before = manuscript[:intro]
+            longest = max(before, key=lambda b: len(b.text))
+            if len(longest.text) >= 400:
+                abstract = [longest]
+                front_ids = {id(b) for b in before if b is not longest}
+                start = intro + 1
     if abstract:
         abstract_text = " ".join(b.text for b in abstract)
         abstract_text = _ABSTRACT_INLINE.sub("", abstract_text, count=1)

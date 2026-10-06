@@ -28,7 +28,7 @@ NUMERIC, AUTHOR_YEAR, NONE = "numeric", "author-year", "none"
 _NUM_PREFIX = re.compile(
     r"^\s*(?:\[(?P<a>\d{1,4})\]|\((?P<b>\d{1,4})\)|(?P<c>\d{1,4})\s*[.)](?!\d)|(?P<d>\d{1,4})(?=\t|\s{2,}|\s+[A-Z]))\s*"
 )
-_SPLIT_MARK = re.compile(r"(?:^|(?<=\s))(?:\[(\d{1,4})\]|(\d{1,4})\.)\s+(?=[A-Z\[])")
+_SPLIT_MARK = re.compile(r"(?:^|(?<=\s))(?:\[(\d{1,4})\]|(\d{1,4})\.)\s+(?=[^\W\d_]|\[)")
 _YEAR_PAREN = re.compile(r"\(\s*((?:1[6-9]|20)\d\d[a-z]?)\s*[),;]")
 _YEAR_ANY = re.compile(r"(?<![\d/.-])((?:1[6-9]|20)\d\d[a-z]?)(?![\d])")
 _YEAR_SPECIAL = re.compile(r"\b(in\s+press|n\.\s?d\.|forthcoming)", re.IGNORECASE)
@@ -110,27 +110,44 @@ def _year(text: str) -> str:
     return re.sub(r"\s+", " ", m.group(1).lower()) if m else ""
 
 
-def _split_sequential(text: str) -> list[str]:
-    """Split "1. A ... 2. B ... 3. C" (one PDF block, or a pasted list) into entries."""
+def _sequential_marks(text: str) -> list[tuple[int, int]]:
+    """Positions of "1." "2." "3." ... (or "[1]" "[2]" ...) that number consecutive entries.
+    Starting from a mark at the very beginning, each step takes the first later mark whose
+    number is one higher, so volumes and page numbers inside an entry are skipped."""
     marks = [(m.start(), int(m.group(1) or m.group(2))) for m in _SPLIT_MARK.finditer(text)]
     if not marks or marks[0][0] != 0:
-        return [text]
+        return []
     chain = [marks[0]]
     for pos, n in marks[1:]:
         if n == chain[-1][1] + 1:
             chain.append((pos, n))
-    if len(chain) < 2:
-        return [text]
+    return chain if len(chain) >= 2 else []
+
+
+def _cut(text: str, chain: list[tuple[int, int]]) -> list[tuple[int, str]]:
     cuts = [p for p, _ in chain] + [len(text)]
-    return [text[a:b].strip() for a, b in zip(cuts, cuts[1:]) if text[a:b].strip()]
+    return [(a, text[a:b].strip()) for a, b in zip(cuts, cuts[1:]) if text[a:b].strip()]
 
 
 def parse_entries(structure: Structure) -> list[RefEntry]:
     entries: list[RefEntry] = []
     for section in structure.ref_sections:
-        raw: list[tuple[str, Block]] = []
+        # Numbered lists are cut on the number sequence over the whole section, because PDF
+        # line merging can both split one entry and glue several together.
+        joined, starts = "", []
         for b in section.blocks:
-            raw += [(t, b) for t in _split_sequential(b.text)]
+            joined += " " if joined else ""
+            starts.append((len(joined), b))
+            joined += b.text
+        chain = _sequential_marks(joined)
+        if chain and len(chain) >= sum(1 for b in section.blocks if _NUM_PREFIX.match(b.text)):
+            owner = lambda pos: next(b for start, b in reversed(starts) if start <= pos)
+            raw = [(t, owner(pos)) for pos, t in _cut(joined, chain)]
+        else:
+            raw = []
+            for b in section.blocks:
+                chain_b = _sequential_marks(b.text)
+                raw += [(t, b) for _, t in _cut(b.text, chain_b)] if chain_b else [(b.text, b)]
         explicit = [_NUM_PREFIX.match(t) for t, _ in raw]
         numbered_list = sum(bool(m) for m in explicit) >= max(1, 0.6 * len(raw)) or any(b.numbered for _, b in raw)
 
@@ -196,7 +213,7 @@ _NOT_REF_BEFORE = re.compile(
     re.IGNORECASE,
 )
 _SUP_CITE = re.compile(r"^\d{1,4}(?:\s*[-–—,]\s*\d{1,4})*$")
-_UNIT_BEFORE = re.compile(r"(?:\b(?:[kcmuµμnp]?m|[kmuµμn]?[lL]|s|K|Pa|Hz|ft|mi|yd)|[\d^×])$")
+_UNIT_BEFORE = re.compile(r"(?:\b(?:[kcmuµμnp]?m|[kmuµμn]?[lL]|s|K|Pa|Hz|ft|mi|yd)|[\^×])$")
 _MAX_NUMBER = 999  # anything larger is a year, not a reference number
 
 
@@ -227,16 +244,35 @@ def numeric_citations(block: Block, kinds: set[str], in_caption: bool, front: bo
         add("refword", m.start(), m.group(0), m.group(1))
     if "parenthesis" in kinds:
         for m in _PAREN.finditer(text):
-            if m.start() < 2 or _NOT_REF_BEFORE.search(text[:m.start()]):
-                continue  # "(1) First item" or "Eq. (3)"
+            if m.start() < 2 or not text[m.start() - 1].isspace() or _NOT_REF_BEFORE.search(text[:m.start()]):
+                continue  # "(1) First item", "Eq. (3)", or glued like the issue in "295(2)"
             add("parenthesis", m.start(), m.group(0), m.group(1))
     if not front:  # superscripts on the title page are author affiliations
         for a, b in block.sup:
             sup = text[a:b].strip().strip(",.;")
-            if a == 0 or not _SUP_CITE.match(sup) or _UNIT_BEFORE.search(text[:a]):
-                continue  # affiliation marker, exponent (10⁵) or unit (m²)
+            if a == 0 or not _SUP_CITE.match(sup) or not _is_citation_superscript(text, a, b):
+                continue
             add("superscript", a, text[a:b], sup)
     return found
+
+
+def _is_citation_superscript(text: str, a: int, b: int) -> bool:
+    """Tell "previously¹²" from chemistry and maths: "sp³", "Fsp³", "R²", "Å³", "m²", "10⁵",
+    "sp³-hybridised", "¹³C"."""
+    before, after = text[:a], text[b:]
+    if _UNIT_BEFORE.search(before):
+        return False  # unit (m², cm³)
+    number = re.search(r"\d[\d.]*$", before)
+    if number and "." not in number.group(0) and not re.fullmatch(r"(?:19|20)\d\d", number.group(0)):
+        return False  # exponent (10⁵, 2³); after a version (ADMETlab 3.0³⁷) or a year it is a citation
+    word = re.search(r"[^\W\d_]+$", before)
+    if word:
+        w = word.group(0)
+        if len(w) <= 2 or w.lower().endswith("sp"):
+            return False  # sp³, R², Å³, Fsp³, Csp³: citations follow words, not symbols
+    if re.match(r"[^\W\d_]|-[^\W\d_]", after):
+        return False  # the word continues: "sp³-hybridised", "¹³C"
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +443,7 @@ def check_references(structure: Structure, style: str = "auto") -> RefReport:
         strong_numeric = detected["bracket"] + detected["superscript"]
         if detected["author_year"] >= 3 and detected["author_year"] > strong_numeric and not numbered_list:
             style = AUTHOR_YEAR
-        elif strong_numeric or numbered_list or (detected["parenthesis"] >= 3 and not detected["author_year"]):
+        elif strong_numeric or numbered_list or (detected["parenthesis"] >= 5 and not detected["author_year"]):
             style = NUMERIC
         elif detected["author_year"]:
             style = AUTHOR_YEAR
@@ -423,8 +459,11 @@ def check_references(structure: Structure, style: str = "auto") -> RefReport:
             for e in entries:
                 counts[e.block.source] = counts.get(e.block.source, 0) + 1
                 e.number = counts[e.block.source]
-        main = max(("bracket", "superscript", "parenthesis"), key=lambda k: detected[k])
-        detail = main if detected[main] else "bracket"
+        # "(3)" is also how lists, equations and issue numbers look, so parentheses are only
+        # treated as citations when they clearly dominate the other numeric styles.
+        strong = max(("bracket", "superscript"), key=lambda k: detected[k])
+        paren_dominant = detected["parenthesis"] >= 5 and detected["parenthesis"] >= 2 * max(detected[strong], 1)
+        detail = "parenthesis" if paren_dominant else strong if detected[strong] else "bracket"
         use = ["bracket", "superscript", "refword"] + (["parenthesis"] if detail == "parenthesis" else [])
         cites = [c for k in use for c in numeric_found[k]]
         _resolve_numeric(entries, cites, unresolved, structure)
@@ -457,6 +496,8 @@ def _lists_for(source: str, structure: Structure) -> list[str]:
 
 
 def _resolve_numeric(entries, cites, unresolved, structure):
+    if not entries:
+        return  # no list at all: reported once as "no_list", not as N "not in list" errors
     by_file: dict[str, dict[int, RefEntry]] = {}
     for e in entries:
         by_file.setdefault(e.block.source, {}).setdefault(e.number, e)
@@ -524,7 +565,9 @@ def _numeric_issues(entries, cites, unresolved, issues, detected, detail, positi
         if gaps and len(gaps) <= 20:
             issues.append(_issue("warning", f"Reference list numbering skips {', '.join(map(str, gaps))}.", "list_numbering"))
     _duplicate_entries(entries, issues)
-    styles = {k: v for k, v in detected.items() if k in ("bracket", "superscript", "parenthesis") and v}
+    # "(3)" is ambiguous (lists, equations), so it only counts as a competing style when chosen.
+    considered = ("bracket", "superscript", "parenthesis") if detail == "parenthesis" else ("bracket", "superscript")
+    styles = {k: v for k, v in detected.items() if k in considered and v}
     if len(styles) > 1 and detail:
         others = ", ".join(f"{v} {k}" for k, v in styles.items() if k != detail)
         issues.append(_issue("info", f"Citations are mostly {detail} style ({styles[detail]}), but there are also "
@@ -532,6 +575,8 @@ def _numeric_issues(entries, cites, unresolved, issues, detected, detail, positi
 
 
 def _resolve_author_year(entries, cites, unresolved, issues):
+    if not entries:
+        return
     by_key: dict[str, list[RefEntry]] = {}
     for e in entries:
         by_key.setdefault(e.key, []).append(e)

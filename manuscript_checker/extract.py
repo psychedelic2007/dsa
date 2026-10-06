@@ -76,7 +76,8 @@ class Block:
 
 def guess_role(filename: str) -> str:
     name = Path(filename).stem.lower()
-    if re.search(r"supp|(^|[^a-z])si([^a-z]|$)|appendix|extended", name):
+    # "MOESM"/"ESM" is Springer Nature's name for electronic supplementary material.
+    if re.search(r"supp|(^|[^a-z])(si|esm)([^a-z]|$)|moesm|appendix|extended", name):
         return "supplementary"
     if re.search(r"fig|legend|caption|table", name):
         return "figures"
@@ -243,39 +244,163 @@ _CAPTION_START = re.compile(
 )
 _SENTENCE_END = re.compile(r"[.!?:][\"')\]]*$")
 _LINE_NUMBER = re.compile(r"^\d{1,5}\s+")
+_KEYWORDS_LINE = re.compile(r"^\s*(?:key\s*words?|index\s+terms)\b", re.IGNORECASE)
+# A period that ends an abbreviation, not a sentence: "(Fig." / "S7)." must stay together.
+_ABBREV_END = re.compile(
+    r"\b(?:Figs?|Tabs?|Refs?|Eqs?|Suppl|Supp|No|Nos|Vol|vs|cf|e\.g|i\.e|al|approx|ca|Dr|Prof|St|Sec|Ch|pp?)\.$",
+    re.IGNORECASE,
+)
+# Section headings that must stay on their own line: otherwise "References" merges into the
+# first entry ("References 1. Hampel...") and the reference list is never found.
+_HEADING_LINE = re.compile(
+    r"^\s*(?:\d+(?:\.\d+)*\.?\s+)?(?:abstract|summary|introduction|background|results?|discussion|conclusions?|"
+    r"methods?|materials\s+and\s+methods|online\s+methods|references?|bibliography|literature\s+cited|"
+    r"acknowledge?ments?|data\s+(?:and\s+code\s+)?availability|code\s+availability|author\s+contributions?|"
+    r"competing\s+interests?|conflicts?\s+of\s+interests?|funding|additional\s+information|"
+    r"supplementary\s+(?:information|materials?)|supporting\s+information|declarations?|ethics(?:\s+statement)?|"
+    r"abbreviations|keywords?)\s*:?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _pdf_line(line: dict) -> tuple[str, list[tuple[int, int]]]:
+    """Rebuild a PDF line from its characters, marking superscripts: smaller than the line's
+    main font and raised above its baseline (subscripts like H2O sit lower, so they are not)."""
+    # pdfplumber can list raised characters before the rest of the line; restore reading order.
+    chars = sorted((c for c in line.get("chars", []) if c.get("text")), key=lambda c: c["x0"])
+    if not chars:
+        return clean(line.get("text", "")), [], False
+    sizes: dict[float, int] = {}
+    for c in chars:
+        sizes[round(c["size"], 1)] = sizes.get(round(c["size"], 1), 0) + len(c["text"])
+    main = max(sizes, key=sizes.get)
+    main_bottoms = sorted(c["bottom"] for c in chars if round(c["size"], 1) == main)
+    baseline = main_bottoms[len(main_bottoms) // 2]
+    # Walk pdfplumber's own line text (its word spacing is reliable) and align each
+    # character to it; anything not matching a character is an inserted space.
+    line_text = line.get("text", "")
+    text, spans, i, j = "", [], 0, 0
+    while i < len(line_text):
+        # Resynchronise over glyphs the line text does not contain (duplicated ligatures such
+        # as "ff", dropped spaces) by looking a few characters ahead.
+        k = next((k for k in range(j, min(j + 4, len(chars)))
+                  if chars[k]["text"] and line_text.startswith(chars[k]["text"], i)), None)
+        if k is None:
+            text += line_text[i]  # a space pdfplumber inserted between words
+            i += 1
+            continue
+        c, j = chars[k], k + 1
+        piece = c["text"]
+        sup = c["size"] <= 0.82 * main and c["bottom"] < baseline - 0.15 * main and not piece.isspace()
+        if sup:
+            if spans and spans[-1][1] == len(text):
+                spans[-1] = (spans[-1][0], len(text) + len(piece))
+            else:
+                spans.append((len(text), len(text) + len(piece)))
+        text += piece
+        i += len(piece)
+    visible = [c for c in chars if not c["text"].isspace()]
+    bold = bool(visible) and all(re.search(r"bold|black|heavy|semibold", c.get("fontname", ""), re.I) for c in visible)
+    return clean(text), spans, bold
+
+
+def _strip_running_lines(pages: list[list[tuple]]) -> list[list[tuple]]:
+    """Drop running headers/footers ("Scientific Reports | (2025) 15:13504 | ... 6"): lines in
+    the first or last two positions of a page that recur, digits aside, on most pages."""
+    if len(pages) < 3:
+        return pages
+    key = lambda t: re.sub(r"\d+", "#", t).strip(" /|").lower()
+    counts: dict[str, int] = {}
+    for lines in pages:
+        for k in {key(ln[0]) for ln in lines[:2] + lines[-2:] if len(ln[0]) <= 160}:
+            counts[k] = counts.get(k, 0) + 1
+    running = {k for k, n in counts.items() if n >= max(3, 0.5 * len(pages))}
+    out = []
+    for lines in pages:
+        edge = set(range(min(2, len(lines)))) | set(range(max(0, len(lines) - 2), len(lines)))
+        out.append([ln for i, ln in enumerate(lines) if not (i in edge and key(ln[0]) in running)])
+    return out
 
 
 def _pdf_blocks(data: bytes, source: str, role: str) -> list[Block]:
     import pdfplumber
 
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        pages = []
+        for page in pdf.pages:
+            lines = []
+            for ln in page.extract_text_lines(return_chars=True):
+                text, spans, bold = _pdf_line(ln)
+                stripped = text.strip()
+                if stripped:
+                    shift = len(text) - len(text.lstrip())
+                    lines.append((stripped, [(a - shift, b - shift) for a, b in spans if b - shift > 0], bold))
+            pages.append(lines)
+    pages = _strip_running_lines(pages)
+
     blocks: list[Block] = []
-    current: list[str] = []
+    current_text, current_sup = "", []
     current_page = 1
-    prev_line = ""
+    current_heading = False
+    prev_line, prev_bold_heading = "", False
 
     def flush():
-        text, sup = unicode_superscripts(" ".join(current).strip())
-        if text:
-            blocks.append(Block(text, source, role, len(blocks) + 1, page=current_page, sup=sup))
-        current.clear()
+        nonlocal current_text, current_sup, current_heading
+        if current_text.strip():
+            text, uni = unicode_superscripts(current_text)
+            blocks.append(Block(text, source, role, len(blocks) + 1, page=current_page, sup=current_sup + uni,
+                                style="Heading (bold)" if current_heading else ""))
+        current_text, current_sup, current_heading = "", [], False
 
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        for page_no, page in enumerate(pdf.pages, start=1):
-            lines = [ln.strip() for ln in clean(page.extract_text() or "").splitlines() if ln.strip()]
-            # Submission PDFs often carry line numbers. Strip them only when most lines
-            # have one, so "...in Figure\n2 shows" keeps its "2" in normal PDFs.
-            if lines and sum(bool(_LINE_NUMBER.match(ln)) for ln in lines) > 0.6 * len(lines):
-                lines = [_LINE_NUMBER.sub("", ln, count=1) for ln in lines]
-            for line in lines:
-                prev_word = prev_line.split()[-1].lower() if prev_line.split() else ""
-                starts_caption = bool(_CAPTION_START.match(line)) and prev_word not in _CONTINUATION_WORDS
-                new_sentence = bool(_SENTENCE_END.search(prev_line)) and line[:1].isupper()
-                if current and (starts_caption or new_sentence):
-                    flush()
-                if not current:
-                    current_page = page_no
-                current.append(line)
-                prev_line = line
+    for page_no, lines in enumerate(pages, start=1):
+        # Submission PDFs often carry line numbers. Strip them only when most lines have one,
+        # so "...in Figure\n2 shows" keeps its "2" in normal PDFs.
+        if lines and sum(bool(_LINE_NUMBER.match(t)) for t, _, _ in lines) > 0.6 * len(lines):
+            stripped = []
+            for t, spans, bold in lines:
+                m = _LINE_NUMBER.match(t)
+                cut = m.end() if m else 0
+                stripped.append((t[cut:], [(a - cut, b - cut) for a, b in spans if a >= cut], bold))
+            lines = stripped
+        # A short run (one or two lines) of entirely bold text is a (sub)section heading, e.g.
+        # "Root mean square deviation (RMSD)", and must not merge into the paragraph below it.
+        # Longer bold runs are bold paragraphs (Scientific Reports sets its abstract in bold).
+        run_len = [0] * len(lines)
+        i = 0
+        while i < len(lines):
+            j = i
+            while j < len(lines) and lines[j][2]:
+                j += 1
+            for k in range(i, j):
+                run_len[k] = j - i
+            i = max(j, i + 1)
+        for line_no, (line, spans, bold) in enumerate(lines):
+            bold_heading = (bold and run_len[line_no] <= 2 and len(line) <= 100
+                            and not line.rstrip().endswith(".") and not _CAPTION_START.match(line))
+            heading = bool(_HEADING_LINE.match(line) or _KEYWORDS_LINE.match(line)) or bold_heading
+            prev_word = prev_line.split()[-1].lower() if prev_line.split() else ""
+            # A caption at the top of a page interrupts a sentence running over from the previous
+            # page ("...interacting with" / "Fig. 2. Known inhibitors..."), so the wrapped-citation
+            # guard does not apply there.
+            starts_caption = bool(_CAPTION_START.match(line)) and (line_no == 0 or prev_word not in _CONTINUATION_WORDS)
+            new_sentence = (bool(_SENTENCE_END.search(prev_line)) and not _ABBREV_END.search(prev_line)
+                            and line[:1].isupper())
+            prev_heading = bool(_HEADING_LINE.match(prev_line) or _KEYWORDS_LINE.match(prev_line)) or prev_bold_heading
+            # A finished caption sentence followed by a lowercase line is body text resuming
+            # around the figure ("...residue range." / "that although..."), not more caption.
+            resumes_body = (bool(_CAPTION_START.match(current_text)) and bool(_SENTENCE_END.search(prev_line))
+                            and line[:1].islower())
+            if current_text and (starts_caption or new_sentence or heading or prev_heading or resumes_body):
+                flush()
+            if not current_text:
+                current_page = page_no
+            else:
+                current_text += " "
+            offset = len(current_text)
+            current_sup += [(a + offset, b + offset) for a, b in spans]
+            current_text += line
+            current_heading = current_heading or bold_heading
+            prev_line, prev_bold_heading = line, bold_heading
     flush()
     return blocks
 

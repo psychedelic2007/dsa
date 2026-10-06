@@ -160,6 +160,8 @@ def test_unsupported_types():
     ("Figure_legends.docx", "figures"),
     ("Supplementary_Information.docx", "supplementary"),
     ("paper_SI.pdf", "supplementary"),
+    ("41598_2025_92644_MOESM1_ESM.docx", "supplementary"),
+    ("Supporting_Information.pdf", "supplementary"),
 ])
 def test_guess_role(name, role):
     assert guess_role(name) == role

@@ -46,8 +46,11 @@ Table 1 never collide), and a figure mentioned inside a *table* caption is legen
 The style is detected automatically (override it in the UI or with `--ref-style`).
 
 - **Numeric**: `[3]`, `[1–4, 7]`, `(3)` (only when parentheses are the dominant style),
-  superscripts (Word formatting or Unicode ¹²), `ref. 5`/`refs 3–5`. Author-affiliation
-  superscripts on the title page, units (`m²`) and exponents (`10⁵`) are ignored. Lists may
+  superscripts (Word formatting, PDF character size/position, or Unicode ¹²), `ref. 5`/`refs 3–5`.
+  Not citations: author-affiliation superscripts on the title page, units (`m²`), exponents
+  (`10⁵`), chemistry (`sp³`, `Fsp³`, `R²`, `¹³C`, `sp³-hybridised`) and issue numbers glued to a
+  volume (`295(2)`). Citations after versions are kept (`ADMETlab 3.0³⁷`, `GROMACS 2018.1⁴⁸⁻⁵⁰`).
+  If no reference list is found, that is reported once rather than as one error per citation. Lists may
   be numbered as text (`1.`, `[1]`) or by Word's list numbering.
   Reports: entries never cited, citations beyond the list, references not numbered in order
   of first citation (skipped when the list is evidently alphabetical), duplicate entries
@@ -90,9 +93,11 @@ references.
 ## Known limitations
 
 - **No LaTeX source** yet (`\label`/`\ref`/`\cite` need their own parser). Check the compiled PDF.
-- **PDF is heuristic.** PDFs have no paragraphs or formatting, so superscript citations are
-  invisible in PDF (they read as "shown12"), and line wrapping can split or merge
-  reference entries. Prefer DOCX.
+- **PDF is reconstructed, not read.** A PDF has positioned characters, not paragraphs. The
+  checker rebuilds them: superscripts from character size and position, headings from short
+  bold lines, running headers/footers removed, numbered reference lists cut on their number
+  sequence. Tested on a Scientific Reports article; unusual layouts (two columns, scanned
+  pages) can still confuse it. DOCX is always more reliable.
 - **Author–year** matching uses the first author's surname and the year; it does not check
   that "Smith and Jones" names the right second author. Numeric `(3)` citations are only
   recognised when parentheses are the dominant style, because `(1)` is usually an enumeration.

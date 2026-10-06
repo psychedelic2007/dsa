@@ -529,7 +529,7 @@ $("themeBtn").addEventListener("click", () => {
 // ---------- files & options ----------
 function guessRole(name) {
   const stem = name.toLowerCase().replace(/\.[^.]+$/, "");
-  if (/supp|(^|[^a-z])si([^a-z]|$)|appendix|extended/.test(stem)) return "supplementary";
+  if (/supp|(^|[^a-z])(si|esm)([^a-z]|$)|moesm|appendix|extended/.test(stem)) return "supplementary"; // MOESM/ESM: Springer Nature SI
   if (/fig|legend|caption|table/.test(stem)) return "figures";
   return "manuscript";
 }
