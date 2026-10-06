@@ -162,3 +162,59 @@ def test_abstract_without_heading_ends_at_keywords():
     assert a.proofing.stats["abstract_words"] and a.proofing.stats["abstract_words"] > 50
     notes = [f.note for c in a.proofing.checks if c.id == "abbreviations" for f in c.findings]
     assert not any(n.startswith("AD is defined again") for n in notes)
+
+
+# --- Second real manuscript (DOCX, superscript citations, AQP4ex paper) --------------------
+
+@pytest.mark.parametrize("before, sup, after, cited", [
+    ("collectively referred to as AQP4ex", "18-20", ". These", True),   # token is AQP4ex, not "ex"
+    ("phosphorylation site in human AQP4ex", "24", ". However", True),
+    ("obtained from TimeTree 5", "37", " for 537", True),                # version-like number before
+    ("the aligner PRANK v.170427", "30", ", using", True),
+    ("consensus -E-S/T-X-Φ", "42", ", placing", True),                   # multi-digit after a symbol
+    ("abolishing it", "44", ". The", True),
+    ("as seen in AD", "3", ".", True),                                   # abbreviation, not a symbol
+    ("the fraction Fsp", "3", " was", False),
+    ("hybridised sp", "3", " carbons", False),
+    ("with R", "2", " = 0.9", False),
+    ("volume of 5 Å", "3", " per", False),
+    ("a rate of 10", "12", " per", False),                               # power of ten, even multi-digit
+    ("about 3×10", "5", " cells", False),
+    ("labelled ", "13", "C atoms", False),                               # isotope: word continues
+    ("amyloid Î", "2", " plaque", False),                                # garbled β, not a citation
+])
+def test_superscript_citation_rules(before, sup, after, cited):
+    from manuscript_checker.references import _is_citation_superscript
+    text = before + sup + after
+    assert _is_citation_superscript(text, len(before), len(before) + len(sup)) is cited
+
+
+def test_species_tautonyms_and_motifs_are_not_flagged():
+    a = analyze([Document("m.docx", "manuscript", [Block(t, "m.docx", "manuscript", i + 1) for i, t in enumerate([
+        "Introduction",
+        "Sequences from Rattus rattus and Alosa alosa were aligned. The the effect was clear.",
+        "The C-terminal segment contains the RXXS motif (R332-X-X-S335) that binds partners.",
+    ])])])
+    c = {c.id: c for c in a.proofing.checks}
+    assert [f.matched for f in c["repeats"].findings] == ["The the"]
+    assert not any("R332" in f.note for f in c["abbreviations"].findings)
+
+
+def test_garbled_characters_are_reported():
+    a = analyze([Document("m.docx", "manuscript", [Block(t, "m.docx", "manuscript", i + 1) for i, t in enumerate([
+        "Amyloid Î² plaques and cafÃ© text and donâ€™t.",
+    ])])])
+    c = next(c for c in a.proofing.checks if c.id == "encoding")
+    assert c.status == "warn" and len(c.findings) == 3
+
+
+def test_supplementary_items_without_si_file_are_one_warning():
+    from manuscript_checker.labels import check_figures
+    blocks = [Block(t, "m.docx", "manuscript", i + 1) for i, t in enumerate(
+        ["See Figure 1 and Supplementary Figs. S1–S3.", "Figure 1. Main."])]
+    r = check_figures(blocks)
+    assert {s.key.label: s.status for s in r.items}["Supplementary Figure 2 (S2)"] == "UNCHECKED"
+    assert [i.code for i in r.issues] == ["unchecked"] and r.issues[0].severity == "warning"
+    # With an SI file uploaded, a missing SI caption is a real error again.
+    r = check_figures(blocks + [Block("Figure S1. Si.", "si.docx", "supplementary", 1)])
+    assert {s.key.label: s.status for s in r.items}["Supplementary Figure 2 (S2)"] == "MISSING"

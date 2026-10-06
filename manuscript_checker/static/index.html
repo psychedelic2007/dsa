@@ -194,6 +194,7 @@ button { font-family: inherit; color: inherit; }
 .tile.OK { border-color: color-mix(in srgb, var(--ok) 35%, var(--line-2)); } .tile.OK::after { background: var(--ok); } .tile.OK .num { color: var(--ok); }
 .tile.UNCITED { border-color: color-mix(in srgb, var(--warn) 45%, var(--line-2)); background: var(--warn-soft); } .tile.UNCITED::after { background: var(--warn); } .tile.UNCITED .num { color: var(--warn); }
 .tile.MISSING { border-color: color-mix(in srgb, var(--bad) 45%, var(--line-2)); background: var(--bad-soft); } .tile.MISSING::after { background: var(--bad); } .tile.MISSING .num { color: var(--bad); }
+.tile.UNCHECKED { border-style: dashed; border-color: var(--line-2); background: var(--card-2); } .tile.UNCHECKED .num { color: var(--muted); }
 .tile.GAP { border-style: dashed; background: transparent; cursor: default; } .tile.GAP .num { color: var(--muted); font-weight: 400; } .tile.GAP:hover { transform: none; box-shadow: none; }
 .tile.dim { opacity: .22; }
 .tile[aria-selected="true"] { box-shadow: 0 0 0 3px var(--accent-2); transform: translateY(-2px); }
@@ -493,11 +494,13 @@ const STATUS_TEXT = {
     OK: "Captioned and cited in the text.",
     UNCITED: "Has a legend but is never cited in the body text. Mentions inside other legends don't count.",
     MISSING: "Cited in the text, but no legend was found in any uploaded file.",
+    UNCHECKED: "Cited in the text. No supplementary file was uploaded, so its legend could not be checked.",
   },
   tables: {
     OK: "Captioned and cited in the text.",
     UNCITED: "Has a caption but is never cited in the body text. Mentions inside other captions don't count.",
     MISSING: "Cited in the text, but no caption was found in any uploaded file.",
+    UNCHECKED: "Cited in the text. No supplementary file was uploaded, so its caption could not be checked.",
   },
 };
 const $ = (id) => document.getElementById(id);
@@ -703,7 +706,8 @@ function renderAll() {
   // Share of everything checked that passed: figures, tables and references that are OK,
   // plus proofing checks that pass. A measured ratio, not an invented points formula.
   const r0 = result.references, pc = result.proofing.checks.filter((c) => c.status !== "info");
-  const total = result.figures.summary.items + result.tables.summary.items + r0.summary.entries + r0.summary.unresolved + pc.length;
+  const unchecked = (result.figures.summary.unchecked || 0) + (result.tables.summary.unchecked || 0);
+  const total = result.figures.summary.items + result.tables.summary.items + r0.summary.entries + r0.summary.unresolved + pc.length - unchecked;
   const passed = result.figures.summary.ok + result.tables.summary.ok + r0.summary.cited + pc.filter((c) => c.status === "pass").length;
   const score = total ? Math.round((100 * passed) / total) : 100;
   const ring = $("ringVal");
@@ -838,7 +842,7 @@ function renderMap(cat) {
         return `<button class="tile ${f.status}${labelMatches(cat, f) ? "" : " dim"}" style="${style}" data-item="${esc(f.id)}" aria-selected="${f.id === sel[cat]}" title="${esc(f.label)} · ${f.status}">
           ${hasWarn(cat, f.id) ? '<span class="flag" aria-label="has warnings"></span>' : ""}<span class="num">${esc(f.short)}</span><span class="cnt">${body}× CITED</span></button>`;
       }).join("")}</div></div>`;
-  }).join("") + `<div class="legend"><span><i class="sw" style="border-color:var(--ok)"></i>CITED</span><span><i class="sw" style="border-color:var(--warn);background:var(--warn-soft)"></i>UNCITED</span><span><i class="sw" style="border-color:var(--bad);background:var(--bad-soft)"></i>NO CAPTION</span><span><i class="sw" style="border-color:var(--line-2);border-style:dashed"></i>GAP</span><span><i class="sw" style="border:0;width:8px;height:8px;border-radius:50%;background:var(--warn)"></i>WARNING</span></div>`;
+  }).join("") + `<div class="legend"><span><i class="sw" style="border-color:var(--ok)"></i>CITED</span><span><i class="sw" style="border-color:var(--warn);background:var(--warn-soft)"></i>UNCITED</span><span><i class="sw" style="border-color:var(--bad);background:var(--bad-soft)"></i>NO CAPTION</span><span><i class="sw" style="border-color:var(--line-2);border-style:dashed"></i>GAP / NOT CHECKED</span><span><i class="sw" style="border:0;width:8px;height:8px;border-radius:50%;background:var(--warn)"></i>WARNING</span></div>`;
 }
 function renderLabelDetail(cat) {
   const root = $("panels").querySelector("[data-detail]");
@@ -847,10 +851,10 @@ function renderLabelDetail(cat) {
   const q = query[cat], body = f.citations.filter((c) => !c.in_legend), legend = f.citations.filter((c) => c.in_legend);
   const issues = result[cat].issues.filter((i) => i.target === f.id && !["missing", "uncited"].includes(i.code));
   root.innerHTML = `
-    <div class="d-head"><span class="d-title">${esc(f.label)}</span><span class="pill ${f.status}">${f.status === "MISSING" ? "NO CAPTION" : f.status}</span></div>
+    <div class="d-head"><span class="d-title">${esc(f.label)}</span><span class="pill ${f.status}">${f.status === "MISSING" ? "NO CAPTION" : f.status === "UNCHECKED" ? "NOT CHECKED" : f.status}</span></div>
     <p class="d-explain">${STATUS_TEXT[cat][f.status]}</p>
     ${issues.map((i) => `<div class="quote ${i.severity === "info" ? "" : "suspect"}" style="margin-bottom:8px"><span class="where">${i.severity.toUpperCase()}</span>${esc(i.message)}</div>`).join("")}
-    <div class="d-sec"><span class="label">CAPTION ${f.captions.length > 1 ? `(${f.captions.length}, DUPLICATE)` : ""}</span>${f.captions.map((c) => `<div class="quote"><span class="where">${esc(c.location)}</span><div class="clamp">${hl(c.text, q)}</div></div>`).join("") || `<div class="quote suspect">No caption found. It must start a paragraph with the label, e.g. “${cat === "figures" ? "Figure" : "Table"} ${esc(f.short)}. Title…”, or use Word's Caption style.</div>`}</div>
+    <div class="d-sec"><span class="label">CAPTION ${f.captions.length > 1 ? `(${f.captions.length}, DUPLICATE)` : ""}</span>${f.captions.map((c) => `<div class="quote"><span class="where">${esc(c.location)}</span><div class="clamp">${hl(c.text, q)}</div></div>`).join("") || (f.status === "UNCHECKED" ? `<div class="quote">Not checked: upload the supplementary file (role SUPPLEMENTARY) to check this caption.</div>` : `<div class="quote suspect">No caption found. It must start a paragraph with the label, e.g. “${cat === "figures" ? "Figure" : "Table"} ${esc(f.short)}. Title…”, or use Word's Caption style.</div>`)}</div>
     <div class="d-sec"><span class="label">CITED IN THE TEXT · ${body.length}</span>${body.map((c) => ctxHtml(c, q)).join("") || `<div class="quote suspect">Never cited in the body text.</div>`}</div>
     ${legend.length ? `<div class="d-sec"><span class="label">MENTIONED IN OTHER CAPTIONS · ${legend.length}</span>${legend.map((c) => ctxHtml(c, q, "legend-mention", " · NOT COUNTED")).join("")}</div>` : ""}`;
   root.querySelectorAll(".clamp").forEach((el) => {

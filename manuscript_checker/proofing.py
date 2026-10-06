@@ -103,6 +103,22 @@ def _placeholders(text_blocks):
     return Check("placeholders", "Placeholders & notes to self", PASS, "No TODO, XX, [ref] or ??? left in the text.")
 
 
+# --- 3b. Encoding errors -----------------------------------------------------
+
+# UTF-8 text decoded with the wrong character set: "Aβ" -> "AÎ²", "é" -> "Ã©", "’" -> "â€™".
+# ("²" may already have been normalised to a superscript "2" during extraction.)
+_MOJIBAKE = re.compile(r"Ã[\u0080-\u00BF]|â€[\u0080-\u00BF\u2018-\u203A\u2122\u0153]|Î[\u0080-\u00BF\d]|Â[\u0080-\u00BF]|\uFFFD")
+
+
+def _encoding(blocks):
+    found = _scan(blocks, _MOJIBAKE)
+    if found:
+        return Check("encoding", "Garbled characters", WARN,
+                     f"{len(found)} garbled character sequence(s) such as “{found[0].matched}”: text copied or exported "
+                     "with the wrong encoding (e.g. “Î²” should be “β”, “Ã©” should be “é”).", found)
+    return Check("encoding", "Garbled characters", PASS, "No mis-encoded characters such as “Î²” or “Ã©”.")
+
+
 # --- 4. Required statements --------------------------------------------------
 
 STATEMENTS = [
@@ -207,7 +223,9 @@ def _abbreviations(structure: Structure) -> Check:
         for b in blocks:
             for m in _ABBR_DEF.finditer(b.plain):
                 abbr, long = m.group("abbr"), m.group("long")
-                if abbr in _COMMON or len(abbr) < 2 or not _initials_match(long, abbr):
+                letters = sum(c.isalpha() for c in abbr)
+                if abbr in _COMMON or letters < 2 or sum(c.isdigit() for c in abbr) > letters \
+                        or not _initials_match(long, abbr):  # "R332-X-X-S335" is a motif, not an abbreviation
                     continue
                 defs.setdefault(abbr, []).append((b, m.start("abbr") - 1, _trim_long(long, abbr)))
         defined_in[zone] = {abbr: (places[0][0], places[0][2]) for abbr, places in defs.items()}
@@ -253,11 +271,24 @@ def _abbreviations(structure: Structure) -> Check:
 # --- 7. Repeated words ------------------------------------------------------
 
 _REPEAT = re.compile(r"\b([A-Za-z]{2,})\s+\1\b", re.IGNORECASE)
+_FUNCTION_WORDS = {
+    "the", "a", "an", "of", "in", "to", "and", "or", "is", "it", "for", "on", "at", "by", "with", "as", "that",
+    "this", "these", "those", "be", "we", "our", "they", "their", "was", "were", "are", "from", "but", "not",
+    "which", "its", "has", "have", "can", "will", "may", "all", "both", "each", "when", "where", "then", "than",
+}
 _REPEAT_OK = {"that", "had", "is", "bye", "very", "so", "no", "yes"}
 
 
 def _repeats(text_blocks):
-    found = [f for f in _scan(text_blocks, _REPEAT, plain=True) if f.matched.split()[0].lower() not in _REPEAT_OK]
+    def accidental(f):
+        first, second = f.matched.split()[0], f.matched.split()[-1]
+        if first.lower() in _REPEAT_OK:
+            return False
+        # Species tautonyms are correct ("Rattus rattus", "Alosa alosa"); a genus is never a
+        # function word, so "The the" is still a typo.
+        tautonym = first[:1].isupper() and second.islower() and first.lower() not in _FUNCTION_WORDS
+        return not tautonym
+    found = [f for f in _scan(text_blocks, _REPEAT, plain=True) if accidental(f)]
     if found:
         return Check("repeats", "Repeated words", WARN, f"{len(found)} repeated word(s), e.g. “{found[0].matched}”.", found)
     return Check("repeats", "Repeated words", PASS, "No accidental “the the”.")
@@ -277,6 +308,7 @@ def run_proofing(docs: list[Document], structure: Structure, counts: dict, limit
         _cross_refs(structure.blocks),
         _leftovers(docs),
         _placeholders(text_blocks),
+        _encoding(structure.blocks),
         _statements(structure.blocks),
         _limits(stats, limits or {}),
         _abbreviations(structure),

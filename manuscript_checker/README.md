@@ -47,9 +47,11 @@ The style is detected automatically (override it in the UI or with `--ref-style`
 
 - **Numeric**: `[3]`, `[1–4, 7]`, `(3)` (only when parentheses are the dominant style),
   superscripts (Word formatting, PDF character size/position, or Unicode ¹²), `ref. 5`/`refs 3–5`.
-  Not citations: author-affiliation superscripts on the title page, units (`m²`), exponents
-  (`10⁵`), chemistry (`sp³`, `Fsp³`, `R²`, `¹³C`, `sp³-hybridised`) and issue numbers glued to a
-  volume (`295(2)`). Citations after versions are kept (`ADMETlab 3.0³⁷`, `GROMACS 2018.1⁴⁸⁻⁵⁰`).
+  Not citations: author-affiliation superscripts on the title page, powers of ten (`10⁵`, `×10¹²`),
+  isotopes (`¹³C`), and single-digit superscripts on symbols and units (`sp³`, `Fsp³`, `R²`, `Å³`,
+  `m²`), plus issue numbers glued to a volume (`295(2)`). Citations are kept after gene and
+  protein names (`AQP4ex¹⁸⁻²⁰`), versions (`TimeTree 5³⁷`, `ADMETlab 3.0³⁷`), symbols when
+  multi-digit (`Φ⁴²`) and short words (`it⁴⁴`).
   If no reference list is found, that is reported once rather than as one error per citation. Lists may
   be numbered as text (`1.`, `[1]`) or by Word's list numbering.
   Reports: entries never cited, citations beyond the list, references not numbered in order
@@ -74,6 +76,7 @@ The style is detected automatically (override it in the UI or with `--ref-style`
 | Broken cross-references | `Error! Reference source not found.`, `Error! Bookmark not defined.`, LaTeX `Figure ??`, `[?]` |
 | Tracked changes & comments | Unaccepted insertions/deletions, comments, highlights (DOCX) |
 | Placeholders | `TODO`, `TBD`, `XX`, `[ref]`, `[citation needed]`, `???`, lorem ipsum |
+| Garbled characters | Text decoded with the wrong encoding: `Î²` for β, `Ã©` for é, `â€™` for ’ |
 | Required statements | Data availability, author contributions, competing interests, funding (plus acknowledgements, code, ethics) |
 | Journal limits | Abstract and main-text words, figures, tables, references vs. limits you enter |
 | Abbreviations | Used before definition, defined twice, defined but never used again, defined only in the abstract |
@@ -88,7 +91,9 @@ references.
 - **Figures/legends file**: everything is legend text, so it never counts as a figure or table
   citation (reference citations in legends do count).
 - **Supplementary**: an unprefixed `Figure 1` here means Supplementary Figure 1, and
-  `Supplementary Figure 1` / `Figure S1` are treated as the same figure.
+  `Supplementary Figure 1` / `Figure S1` are treated as the same figure. If no supplementary
+  file is uploaded, cited supplementary items are shown as *not checked* (one warning), not as
+  missing captions.
 
 ## Known limitations
 

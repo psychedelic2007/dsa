@@ -106,6 +106,8 @@ class LabelStatus:
     mentions: list[Mention] = field(default_factory=list)
     # Blocks that start with this figure's label but were not accepted as its caption.
     suspects: list[Block] = field(default_factory=list)
+    # Supplementary item cited while no supplementary file was uploaded: cannot be checked.
+    unchecked: bool = False
 
     @property
     def body_mentions(self) -> list[Mention]:
@@ -113,6 +115,8 @@ class LabelStatus:
 
     @property
     def status(self) -> str:
+        if self.unchecked:
+            return "UNCHECKED"
         if not self.captions:
             return "MISSING"  # cited, but no caption found anywhere
         if not self.body_mentions:
@@ -272,6 +276,10 @@ def check_labels(blocks: list[Block], spec: Spec) -> LabelReport:
                 statuses[m.key].suspects.append(block)
 
     items = sorted(statuses.values(), key=lambda s: s.key)
+    if not any(b.role == "supplementary" for b in blocks):
+        for s in items:
+            if s.key.kind == SUPP and not s.captions:
+                s.unchecked = True
     position = {id(b): i for i, b in enumerate(blocks)}
     return LabelReport(spec, items, _issues(items, position, spec))
 
@@ -313,6 +321,12 @@ def _issues(items: list[LabelStatus], position: dict[int, int], spec: Spec) -> l
     for f in items:
         if f.captions:
             groups.setdefault((f.key.kind_rank, f.key.number[:-1]), set()).add(f.key.number[-1])
+    unchecked = [f for f in items if f.status == "UNCHECKED"]
+    if unchecked:
+        names = ", ".join(f"S{'.'.join(map(str, f.key.number))}" for f in unchecked)
+        issues.append(Issue("warning", f"Supplementary {spec.noun.lower()}s {names} are cited, but no supplementary "
+                                       "file was uploaded, so their captions could not be checked. Add the SI file "
+                                       "with the role SUPPLEMENTARY.", unchecked[0].key, code="unchecked"))
     for (rank, chapter), numbers in groups.items():
         for n in sorted(set(range(1, max(numbers) + 1)) - numbers):
             key = LabelKey(spec.name, rank, chapter + (n,))

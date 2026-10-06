@@ -257,21 +257,30 @@ def numeric_citations(block: Block, kinds: set[str], in_caption: bool, front: bo
 
 
 def _is_citation_superscript(text: str, a: int, b: int) -> bool:
-    """Tell "previously¹²" from chemistry and maths: "sp³", "Fsp³", "R²", "Å³", "m²", "10⁵",
-    "sp³-hybridised", "¹³C"."""
+    """Tell citations ("previously¹²", "AQP4ex¹⁸⁻²⁰", "TimeTree 5³⁷", "Φ⁴²") from chemistry, units
+    and maths ("sp³", "Fsp³", "R²", "Å³", "m²", "10⁵", "¹³C", "sp³-hybridised").
+
+    The deciding fact: chemistry, units and exponents are almost always a single digit, while
+    citations are often multi-digit, a range or a list. Symbol-based rules therefore only
+    apply to single-digit superscripts; an exponent of 10 is never a citation."""
     before, after = text[:a], text[b:]
+    simple = bool(re.fullmatch(r"[-–−]?\d", text[a:b].strip().strip(",.;")))
+    if re.match(r"[^\W\d_]|-[^\W\d_]", after):
+        return False  # the word continues: "sp³-hybridised", "¹³C"
+    if re.search(r"(?:^|[^\d.])10$|[×x]\s?10$", before):
+        return False  # power of ten: 10⁵, ×10¹²
+    if not simple:
+        return True
     if _UNIT_BEFORE.search(before):
         return False  # unit (m², cm³)
     number = re.search(r"\d[\d.]*$", before)
     if number and "." not in number.group(0) and not re.fullmatch(r"(?:19|20)\d\d", number.group(0)):
-        return False  # exponent (10⁵, 2³); after a version (ADMETlab 3.0³⁷) or a year it is a citation
-    word = re.search(r"[^\W\d_]+$", before)
-    if word:
-        w = word.group(0)
-        if len(w) <= 2 or w.lower().endswith("sp"):
-            return False  # sp³, R², Å³, Fsp³, Csp³: citations follow words, not symbols
-    if re.match(r"[^\W\d_]|-[^\W\d_]", after):
-        return False  # the word continues: "sp³-hybridised", "¹³C"
+        return False  # exponent (2³); after a version (3.0³) or a year it is a citation
+    token = re.search(r"\w+$", before)
+    if token and token.group(0)[-1:].isalpha():
+        t = token.group(0)
+        if len(t) == 1 or t.lower().endswith("sp"):
+            return False  # symbol: R², Å³, sp³, Fsp³ (but "AD³" or "AQP4ex³" are citations)
     return True
 
 

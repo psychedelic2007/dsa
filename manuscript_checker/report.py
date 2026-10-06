@@ -58,6 +58,7 @@ def _labels(report: LabelReport, pos: _Positions) -> dict:
             "ok": statuses.count("OK"),
             "uncited": statuses.count("UNCITED"),
             "missing": statuses.count("MISSING"),
+            "unchecked": statuses.count("UNCHECKED"),
             "errors": sum(i.severity == "error" for i in report.issues),
             "warnings": sum(i.severity == "warning" for i in report.issues),
         },
