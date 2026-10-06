@@ -186,3 +186,55 @@ def test_pdf_wrapped_citation_axis_labels_and_line_numbers(numbered):
     report = check_figures(load_blocks("paper.pdf", buf.getvalue(), "manuscript"))
     assert _status(report) == {"Figure 1": "OK", "Figure 2": "OK", "Figure 3": "UNCITED"}
     assert all(len(f.captions) == 1 for f in report.figures)
+
+
+@pytest.mark.parametrize("caption", [
+    "Figure S6. Title.",
+    "Figure S6 (A) Distribution of scores.",
+    "Figure S6 (a–c) Distribution of scores.",
+    "Figure S6a. Title",
+    "Figure S6. Title",
+    "Figure S​6. Title",
+    "Figure­S6. Title",
+    "Figure S-6. Title",
+    "Figure S6. Values 1 ... 10",
+    "[Figure S6] Title",
+])
+def test_caption_variants_are_found(caption):
+    from manuscript_checker.extract import clean
+    blocks = [
+        Block("We show Figure S6.", "m.docx", "manuscript", 1),
+        Block(clean(caption), "si.docx", "supplementary", 1),
+    ]
+    assert _status(check_figures(blocks)) == {"Supplementary Figure 6 (S6)": "OK"}
+
+
+def test_docx_line_break_before_caption():
+    def build(d):
+        d.add_paragraph("We show Figure S6.")
+        p = d.add_paragraph("(a) (b)")
+        p.add_run().add_break()
+        p.add_run("Figure S6. Caption after a manual line break.")
+
+    blocks = load_blocks("si.docx", _docx_bytes(build), "manuscript")
+    assert _status(check_figures(blocks)) == {"Supplementary Figure 6 (S6)": "OK"}
+
+
+def test_unrecognised_caption_is_pointed_out():
+    blocks = [
+        Block("We show Figure S6.", "m.docx", "manuscript", 1),
+        Block("Figure S6 distribution of scores across runs", "si.docx", "supplementary", 4),
+    ]
+    report = check_figures(blocks)
+    assert _status(report) == {"Supplementary Figure 6 (S6)": "MISSING"}
+    hint = [i.message for i in report.issues if i.severity == "info"]
+    assert hint and "si.docx (paragraph 4)" in hint[0]
+
+
+def test_body_sentence_with_parenthetical_is_not_a_caption():
+    assert parse_caption(body("Figure 2 (left) shows the trend.")) is None
+
+
+def test_parenthetical_citation_is_not_a_suspected_caption():
+    blocks = [Block("Mutational scanning (Fig. S5) supports the mechanism.", "m.docx", "manuscript", 1)]
+    assert not any(i.code == "suspect" for i in check_figures(blocks).issues)

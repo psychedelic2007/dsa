@@ -18,9 +18,10 @@ ROLE_ORDER = {"manuscript": 0, "figures": 1, "supplementary": 2}
 
 _PREFIX = r"(?P<prefix>Supplementary|Supplemental|Suppl?\.?|(?-i:SI)|Extended\s+Data)"
 _KEYWORD = r"(?:Figures?|Figs?\.?)"
-# "3", "S3", and chapter-style thesis numbering "3.2" / "3.2.1". The lookahead stops
-# "Figure 2019" or "Fig. 1234" from being read as a figure number.
-_NUM = r"S?\d{1,3}(?:\.\d{1,3}){0,2}(?!\d)"
+# "3", "S3", "S-3", and chapter-style thesis numbering "3.2" / "3.2.1". The lookahead
+# stops "Figure 2019" or "Fig. 1234" from being read as a figure number.
+_RAW_NUM = r"(?:S[-‐]?)?\d{1,3}(?:\.\d{1,3}){0,2}"
+_NUM = rf"{_RAW_NUM}(?!\d)"
 _PANEL = r"(?:[A-Za-z]{1,2}(?![A-Za-z])|\([A-Za-z]{1,2}\))"
 _ITEM = rf"{_NUM}{_PANEL}?"
 _SEP = r"\s*(?:,\s*(?:and\s+|&\s*)?|&|\band\b|\bor\b|\bto\b|[-–—‐])\s*"
@@ -28,12 +29,15 @@ _LIST = rf"{_ITEM}(?:{_SEP}(?:{_ITEM}|{_PANEL}))*"
 
 MENTION_RE = re.compile(rf"\b(?:{_PREFIX}\s*)?{_KEYWORD}\s*(?P<items>{_LIST})", re.IGNORECASE)
 CAPTION_RE = re.compile(
-    rf"^[\s*_#>]*(?:{_PREFIX}\s*)?{_KEYWORD}\s*(?P<num>{_NUM})(?P<after>.*)$",
+    rf"^[\s*_#>\[(]*(?:{_PREFIX}\s*)?{_KEYWORD}\s*(?P<num>{_NUM})(?P<panel>[A-Za-z](?![A-Za-z]))?(?P<after>.*)$",
     re.IGNORECASE | re.DOTALL,
 )
-_TOKEN_RE = re.compile(r"(?P<num>S?\d{1,3}(?:\.\d{1,3}){0,2})|(?P<range>[-–—‐]|\bto\b)|(?P<word>[A-Za-z]+)", re.I)
+_TOKEN_RE = re.compile(rf"(?P<num>{_RAW_NUM})|(?P<range>[-–—‐]|\bto\b)|(?P<word>[A-Za-z]+)", re.I)
 # "List of Figures" / table-of-contents entries: dot leaders or a tab before a page number.
-_TOC_ENTRY = re.compile(r"(?:\.{3,}|…|\t)\s*\d+\s*$")
+# Four or more dots, so an ellipsis inside a caption ("1 ... 10") is not mistaken for a leader.
+_TOC_ENTRY = re.compile(r"(?:(?:\.\s?){4,}|…{2,}|\t)\s*\d+\s*$")
+# "(A)", "(a–c)", "(i, ii)" directly after the label: a panel key, which only captions have.
+_PANEL_KEY = re.compile(r"\s*\(\s*[A-Za-z0-9]{1,3}(?:\s*[-–,]\s*[A-Za-z0-9]{1,3})*\s*\)\s*[A-Z]")
 _MAX_RANGE = 50
 
 
@@ -81,6 +85,8 @@ class FigureStatus:
     key: FigureKey
     captions: list[Caption] = field(default_factory=list)
     mentions: list[Mention] = field(default_factory=list)
+    # Blocks that start with this figure's label but were not accepted as its caption.
+    suspects: list[Block] = field(default_factory=list)
 
     @property
     def body_mentions(self) -> list[Mention]:
@@ -100,6 +106,7 @@ class Issue:
     severity: str  # "error" | "warning" | "info"
     message: str
     key: FigureKey | None = None
+    code: str = ""  # missing | suspect | uncited | duplicate | supp_only | gap | order
 
 
 @dataclass
@@ -114,7 +121,7 @@ class FigureReport:
 
 def _parse_number(raw: str) -> tuple[bool, tuple[int, ...]]:
     supp = raw[:1] in "sS"
-    return supp, tuple(int(p) for p in raw.lstrip("sS").split("."))
+    return supp, tuple(int(p) for p in raw.lstrip("sS-‐").split("."))
 
 
 def _kind(prefix: str | None, s_prefixed: bool, role: str) -> str:
@@ -171,12 +178,13 @@ def parse_caption(block: Block) -> tuple[Caption, tuple[int, int]] | None:
     m = CAPTION_RE.match(block.text)
     if not m:
         return None
-    after = m.group("after")
+    after = re.sub(r"^[\])]", "", m.group("after"))  # "[Figure 2] Title"
     is_caption_style = "caption" in block.style.lower()
     looks_like_caption = (
         is_caption_style
         or re.match(r"\s*(?:[.:|–—-]|$)", after)  # "Figure 2.", "Fig. 2 |", "Figure 2" alone
         or re.match(r"\s+[A-Z]", after)  # "Figure 2 Overview of ..." (no punctuation)
+        or _PANEL_KEY.match(after)  # "Figure 2 (A) Overview ..."
     )
     # Body sentences such as "Figure 2 shows ..." continue in lower case.
     if not looks_like_caption:
@@ -188,7 +196,9 @@ def parse_caption(block: Block) -> tuple[Caption, tuple[int, int]] | None:
 
 def _is_toc_entry(block: Block) -> bool:
     style = block.style.lower()
-    return "toc" in style or "table of figures" in style or bool(_TOC_ENTRY.search(block.text))
+    if "toc" in style or "table of figures" in style:
+        return True
+    return "caption" not in style and bool(_TOC_ENTRY.search(block.text))
 
 
 def check_figures(blocks: list[Block]) -> FigureReport:
@@ -198,10 +208,21 @@ def check_figures(blocks: list[Block]) -> FigureReport:
     def status(key: FigureKey) -> FigureStatus:
         return statuses.setdefault(key, FigureStatus(key))
 
+    label_starts: list[tuple[Block, list[Mention]]] = []
     for block in blocks:
         if _is_toc_entry(block):
             continue
         parsed = parse_caption(block)
+        if not parsed:
+            # Only labels at (or within a short panel-key prefix of) the start of a block, and
+            # not in parentheses: "Mutational scanning (Fig. S5) ..." is a citation, not a caption.
+            early = []
+            for m in parse_mentions(block, in_caption=False):
+                start = block.text.find(m.matched)
+                if start <= 12 and not block.text[:start].rstrip().endswith(("(", "[")):
+                    early.append(m)
+            if early:
+                label_starts.append((block, early))
         if parsed:
             caption, own_span = parsed
             status(caption.key).captions.append(caption)
@@ -213,6 +234,11 @@ def check_figures(blocks: list[Block]) -> FigureReport:
         for mention in mentions:
             status(mention.key).mentions.append(mention)
 
+    for block, early in label_starts:
+        for m in early:
+            if m.key in statuses and not statuses[m.key].captions:
+                statuses[m.key].suspects.append(block)
+
     figures = sorted(statuses.values(), key=lambda s: s.key)
     position = {id(b): i for i, b in enumerate(blocks)}
     return FigureReport(figures, _issues(figures, position))
@@ -223,15 +249,24 @@ def _issues(figures: list[FigureStatus], position: dict[int, int]) -> list[Issue
     for f in figures:
         if f.status == "MISSING":
             where = f.body_mentions[0].block.location if f.body_mentions else f.mentions[0].block.location
-            issues.append(Issue("error", f"{f.key.label} is cited (first at {where}) but no caption was found.", f.key))
+            issues.append(Issue("error", f"{f.key.label} is cited (first at {where}) but no caption was found.", f.key, code="missing"))
+            for b in sorted(f.suspects, key=lambda b: b.role == "manuscript")[:3]:
+                text = b.text if len(b.text) <= 90 else b.text[:90] + "…"
+                issues.append(Issue(
+                    "info",
+                    f"Possible caption for {f.key.label} at {b.location} was not recognised as one: “{text}”. "
+                    "A caption should begin with the label followed by '.', ':' or '|', or use Word's Caption style.",
+                    f.key,
+                    code="suspect",
+                ))
         elif f.status == "UNCITED":
             note = " It is only mentioned inside other figure legends." if f.mentions else ""
-            issues.append(Issue("error", f"{f.key.label} has a caption but is never cited in the text.{note}", f.key))
+            issues.append(Issue("error", f"{f.key.label} has a caption but is never cited in the text.{note}", f.key, code="uncited"))
         if len(f.captions) > 1:
             places = "; ".join(c.block.location for c in f.captions)
-            issues.append(Issue("warning", f"{f.key.label} has {len(f.captions)} captions: {places}.", f.key))
+            issues.append(Issue("warning", f"{f.key.label} has {len(f.captions)} captions: {places}.", f.key, code="duplicate"))
         if f.key.kind == SUPP and f.body_mentions and all(m.block.role == "supplementary" for m in f.body_mentions):
-            issues.append(Issue("info", f"{f.key.label} is cited only in the supplementary text, never in the main manuscript.", f.key))
+            issues.append(Issue("info", f"{f.key.label} is cited only in the supplementary text, never in the main manuscript.", f.key, code="supp_only"))
 
     # Numbering gaps among captioned figures, per kind and per chapter prefix.
     groups: dict[tuple[int, tuple[int, ...]], set[int]] = {}
@@ -242,7 +277,7 @@ def _issues(figures: list[FigureStatus], position: dict[int, int]) -> list[Issue
         for n in sorted(set(range(1, max(numbers) + 1)) - numbers):
             key = FigureKey(rank, chapter + (n,))
             if key not in {f.key for f in figures}:
-                issues.append(Issue("warning", f"Numbering gap: no caption or citation for {key.label}.", key))
+                issues.append(Issue("warning", f"Numbering gap: no caption or citation for {key.label}.", key, code="gap"))
 
     # Journals expect figures to be first cited in numerical order.
     first_seen: list[FigureKey] = []
@@ -257,6 +292,7 @@ def _issues(figures: list[FigureStatus], position: dict[int, int]) -> list[Issue
                     f"{m.key.label} is first cited at {m.block.location}, after {max(later).label} was already cited "
                     "(figures should be cited in numerical order).",
                     m.key,
+                    code="order",
                 ))
             first_seen.append(m.key)
 

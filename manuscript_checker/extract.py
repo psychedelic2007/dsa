@@ -19,6 +19,14 @@ ROLE_LABELS = {
 
 SUPPORTED_SUFFIXES = (".docx", ".pdf", ".txt", ".md")
 
+# Zero-width spaces/joiners, BOM, word joiner and soft hyphen: invisible in Word, but they
+# break "Figure S\u200b6" apart for pattern matching. Pasted text is full of them.
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00ad"))
+
+
+def clean(text: str) -> str:
+    return text.translate(_INVISIBLE).replace("\u00a0", " ")
+
 
 @dataclass
 class Block:
@@ -71,6 +79,7 @@ def _docx_blocks(data: bytes, source: str, role: str) -> list[Block]:
     doc = docx.Document(io.BytesIO(data))
     style_names = {s.style_id: s.name for s in doc.styles}
     blocks = []
+    paragraph_no = 0
     # Iterating every w:p in the body (not doc.paragraphs) also picks up paragraphs
     # inside tables and text boxes, which is where many figure captions live.
     for p in doc.element.body.iter(f"{_W}p"):
@@ -78,15 +87,21 @@ def _docx_blocks(data: bytes, source: str, role: str) -> list[Block]:
         # reading both would report every caption in a text box as a duplicate.
         if any(a.tag == _MC_FALLBACK for a in p.iterancestors()):
             continue
-        text = _docx_paragraph_text(p).strip()
-        if not text:
-            continue
         style_id = p.find(f"{_W}pPr/{_W}pStyle")
         style = ""
         if style_id is not None:
             sid = style_id.get(f"{_W}val", "")
             style = style_names.get(sid) or sid
-        blocks.append(Block(text, source, role, len(blocks) + 1, style=style))
+        text = clean(_docx_paragraph_text(p))
+        if not text.strip():
+            continue
+        paragraph_no += 1
+        # A manual line break (Shift+Enter) often separates an image or panel labels from
+        # the caption in the same paragraph; each line is its own block so the caption
+        # still starts a block.
+        for line in text.split("\n"):
+            if line.strip():
+                blocks.append(Block(line.strip(), source, role, paragraph_no, style=style))
     return blocks
 
 
@@ -104,7 +119,7 @@ def _docx_paragraph_text(p) -> str:
             elif tag == f"{_W}tab":
                 out.append("\t")
             elif tag in (f"{_W}br", f"{_W}cr"):
-                out.append(" ")
+                out.append("\n")
             elif tag == f"{_W}noBreakHyphen":
                 out.append("-")
             # w:delText (tracked deletions) and w:instrText (field codes) are skipped
@@ -149,7 +164,7 @@ def _pdf_blocks(data: bytes, source: str, role: str) -> list[Block]:
 
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         for page_no, page in enumerate(pdf.pages, start=1):
-            lines = [ln.strip() for ln in (page.extract_text() or "").splitlines() if ln.strip()]
+            lines = [ln.strip() for ln in clean(page.extract_text() or "").splitlines() if ln.strip()]
             # Submission PDFs often carry line numbers. Strip them only when most lines
             # have one, so "...in Figure\n2 shows" keeps its "2" in normal PDFs.
             if lines and sum(bool(_LINE_NUMBER.match(ln)) for ln in lines) > 0.6 * len(lines):
@@ -172,6 +187,7 @@ def _pdf_blocks(data: bytes, source: str, role: str) -> list[Block]:
 
 
 def _text_blocks(text: str, source: str, role: str) -> list[Block]:
+    text = clean(text)
     blocks = []
     for para in re.split(r"\n\s*\n", text):
         para = " ".join(ln.strip() for ln in para.splitlines()).strip()

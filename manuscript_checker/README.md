@@ -5,10 +5,15 @@ main manuscript, a separate legends file, and supplementary files.
 
 ```bash
 pip install -r manuscript_checker/requirements.txt
-streamlit run manuscript_checker/app.py                      # web UI
+uvicorn manuscript_checker.server:app      # web UI at http://localhost:8000
 python -m manuscript_checker.cli paper.docx --supp SI.docx   # CLI; exit 1 on errors
 python -m pytest manuscript_checker                          # tests
 ```
+
+The web UI: drag in files, set each file's role, and get a figure map (click a tile to see
+its caption and every citation in context), a citation-flow plot showing where in the
+manuscript each figure is cited and which are out of order, an issue list, and
+CSV/JSON/checklist export. Click **Load example** to try it without your own files.
 
 ## What it reports
 
@@ -28,7 +33,12 @@ order, and supplementary figures cited only in the SI and never in the main text
   `Figure S1–S3`, `Supplementary/Suppl./SI Fig. 4`, `Extended Data Fig. 1`,
   thesis numbering `Figure 3.2`, `Figures 3.1–3.3`.
 - Captions: `Figure 1.`, `Fig. 2 |`, `**Figure 3:**`, `Figure 4 Title…`, a bare `Figure 5`,
-  and anything in Word's *Caption* style. `Figure 2 shows…` is a citation, not a caption.
+  `Figure S6a.`, `Figure S6 (A) Title…`, `Figure S-6.`, `[Figure S6] Title`, and anything in
+  Word's *Caption* style. `Figure 2 shows…` is a citation, not a caption.
+- Captions after a manual line break (Shift+Enter) in the same paragraph as the image or
+  panel labels; invisible characters (zero-width spaces, soft hyphens) are ignored.
+- When a figure is cited but no caption is accepted, paragraphs that *start* with its label
+  are reported as "possible caption … not recognised", so you can see why.
 - DOCX: paragraphs in tables and text boxes, Word SEQ/REF fields, tracked deletions ignored,
   "List of Figures" / TOC entries ignored.
 - PDF: wrapped lines, captions under axis labels, line-numbered submission PDFs.
