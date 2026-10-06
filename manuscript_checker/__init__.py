@@ -1,6 +1,7 @@
-"""Pre-submission consistency checks for manuscripts (figures first)."""
+"""Pre-submission checks for manuscripts: figures, tables, references and proofing."""
 
-from .extract import Block, guess_role, load_blocks
-from .figures import FigureReport, check_figures
+from .analyze import Analysis, analyze
+from .extract import Block, Document, guess_role, load_blocks, load_document
+from .labels import LabelReport, check_figures, check_tables
 
-__all__ = ["Block", "FigureReport", "check_figures", "guess_role", "load_blocks"]
+__all__ = ["Analysis", "Document", "analyze", "load_document", "Block", "LabelReport", "check_figures", "check_tables", "guess_role", "load_blocks"]

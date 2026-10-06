@@ -4,7 +4,7 @@ import docx
 import pytest
 
 from manuscript_checker.extract import Block, guess_role, load_blocks
-from manuscript_checker.figures import check_figures, parse_caption, parse_mentions
+from manuscript_checker.labels import TABLE, check_figures, check_labels, parse_caption, parse_mentions
 
 
 def body(text, role="manuscript", style=""):
@@ -70,7 +70,7 @@ def _report(*paragraphs, role="manuscript"):
 
 
 def _status(report):
-    return {f.key.label: f.status for f in report.figures}
+    return {f.key.label: f.status for f in report.items}
 
 
 def test_end_to_end_statuses():
@@ -185,7 +185,7 @@ def test_pdf_wrapped_citation_axis_labels_and_line_numbers(numbered):
     c.save()
     report = check_figures(load_blocks("paper.pdf", buf.getvalue(), "manuscript"))
     assert _status(report) == {"Figure 1": "OK", "Figure 2": "OK", "Figure 3": "UNCITED"}
-    assert all(len(f.captions) == 1 for f in report.figures)
+    assert all(len(f.captions) == 1 for f in report.items)
 
 
 @pytest.mark.parametrize("caption", [
